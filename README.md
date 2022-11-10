@@ -152,7 +152,8 @@ For details see the keymap file available through the menu:
     * [x] Ask for parameters that are missing
     * [x] Inject parameters to script
     * [x] Convert parameter name to a label
-    * [ ] Use previous parameter value as initial value
+    * [x] Use previous parameter value as initial value
+    * [ ] Store and Load previous parameter values
 * [x] Support configuration block
     * [x] Extract settings
     * [x] Supply settings as parameters to script
@@ -160,6 +161,7 @@ For details see the keymap file available through the menu:
 * [ ] Support output block
     * [x] Support updating / replacing output section
     * [x] Handle missing output block
+    * [x] Add timestamp to output
     * [ ] Support `tail=n`
     * [ ] Support `head=n`
     * [ ] Support `filter=text`

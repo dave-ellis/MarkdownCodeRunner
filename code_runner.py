@@ -5,7 +5,11 @@ import threading
 import json
 import logging
 
+import sublime_settings
+import tail
+
 from string import Template
+from datetime import datetime
 
 try:
     import sublime
@@ -22,11 +26,11 @@ except ImportError:  # running tests
     sys.modules['sublime'] = sublime
     sys.modules['sublime_plugin'] = sublime_plugin
 
-verbose_setting = 'code_runner_verbose'
-scope_setting = 'code_runner_scope_name'
-commands_setting = 'code_runner_commands'
-config_tag_setting = 'code_runner_config_tag'
-output_tag_setting = 'code_runner_output_tag'
+verbose_key = 'code_runner_verbose'
+scope_key = 'code_runner_scope_name'
+commands_key = 'code_runner_commands'
+config_tag_key = 'code_runner_config_tag'
+output_tag_key = 'code_runner_output_tag'
 
 default_scope_name = 'markup.raw.block.fenced.markdown'
 default_commands = {
@@ -38,35 +42,92 @@ default_output_tag = "CodeRunnerOUT"
 results_view_name = "Code Runner Results"
 
 
+def load_settings():
+    root = sublime.load_settings('CodeRunner.sublime-settings')
+    return sublime_settings.Settings(root, None, verbose_key)
+
+
 class RunCodeCommand(sublime_plugin.TextCommand):
     def __init__(self, view):
         sublime_plugin.TextCommand.__init__(self, view)
 
-        root_settings = sublime.load_settings('CodeRunner.sublime-settings')
-        settings = Settings(root_settings, None, verbose_setting)
-        self.settings = settings
+        self.settings = load_settings()
 
-        self.verbose = settings.get(verbose_setting, False) or None
-        self.scope = settings.get(scope_setting, default_scope_name)
-        self.output_tag = settings.get(output_tag_setting, default_output_tag)
+        self.verbose = self.settings.verbose
+        self.scope = self.settings.get(scope_key, default_scope_name)
+        self.config_tag = self.settings.get(config_tag_key, default_config_tag)
+
+        self.edit = None
+        self.config = {}
+        self.parameters = []
+        self.previous_args = {}
+        self.args = {}
+        self.codeRegion = None
+        self.text = ''
+        self.user_input = ''
 
         logger = logging.getLogger('CodeRunner')
         logger.setLevel(logging.DEBUG if self.verbose else logging.INFO)
         self.logger = logger
 
+    @staticmethod
+    def identify_parameters(script):
+        return [
+            s[1] or s[2]
+            for s in Template.pattern.findall(script) if s[1] or s[2]
+        ]
+
     def run(self, edit):
-        view = self.view
-        settings = self.settings
+        self.edit = edit
 
-        selection = view.sel()
+        selection = self.view.sel()
         cur = selection[-1].a
-        if view.match_selector(cur, self.scope):
-            codeRegion = self.expand_to_scope(cur, self.scope)
-            outputRegion = self.locate_output_block(codeRegion)
-            text = self.region_text(codeRegion)
+        if self.view.match_selector(cur, self.scope):
+            now = datetime.now()
+            self.args = {'timestamp': now.strftime("%Y-%m-%dT%H:%M:%S")}
 
-            command = ShellCommand(view, edit, settings, text, outputRegion)
-            command.capture_args()
+            self.codeRegion = self.expand_to_scope(cur, self.scope)
+            self.text = self.region_text(self.codeRegion)
+
+            self.config = self.extract_config()
+
+            self.parameters = self.identify_parameters(self.text)
+            self.logger.debug("parameters: %s", self.parameters)
+            self.capture_args()
+
+    def extract_config(self):
+        config = {}
+
+        configStart = r"<!--\W*" + self.config_tag + r"\W*-->"
+        startRegion = self.view.find(configStart, 0)
+        if startRegion.a < 0:
+            return config
+
+        line = self.view.full_line(startRegion.a)
+        start = line.b
+
+        configEnd = r"<!--\W*/" + self.config_tag + r"\W*-->"
+        endRegion = self.view.find(configEnd, start)
+        if endRegion.a < 0:
+            return config
+
+        line = self.view.full_line(endRegion.a)
+        end = line.a - 1
+
+        configText = self.view.substr(sublime.Region(start, end))
+        self.logger.debug("found config block:\n%s", configText)
+
+        lines = self.view.split_by_newlines(sublime.Region(start, end))
+        for line in lines:
+            text = self.view.substr(line)
+            parts = text.split("=", 1)
+            if len(parts) == 2:
+                name = parts[0].split()[-1]
+                value = parts[1]
+                self.logger.debug("extracted config: %s='%s'", name, value)
+                config[name] = value
+
+        return config
 
     def expand_to_scope(self, point, scope):
         region = self.view.full_line(point)
@@ -110,164 +171,13 @@ class RunCodeCommand(sublime_plugin.TextCommand):
 
         return text
 
-    def locate_output_block(self, codeRegion):
-        outputStart = r"<!--\W*" + self.output_tag + r"\W*-->"
-        startRegion = self.view.find(outputStart, codeRegion.b + 1)
-        if startRegion.a < 0:
-            return None
-
-        fencedRegion = self.view.find(r'^```', codeRegion.b + 1)
-        if fencedRegion.a > 0 and fencedRegion.a < startRegion.a:
-            return None
-
-        line = self.view.full_line(startRegion.a)
-        start = line.b
-
-        outputEnd = r"<!--\W*/" + self.output_tag + r"\W*-->"
-        endRegion = self.view.find(outputEnd, start)
-        if endRegion.a < 0:
-            return None
-
-        line = self.view.full_line(endRegion.a)
-        end = line.a - 1
-
-        outputRegion = sublime.Region(start, end)
-        text = self.view.substr(outputRegion)
-
-        self.logger.debug("found output block:\n%s", text)
-        return outputRegion
-
-
-class Settings:
-    def __init__(self, root, root_name, verbose_key):
-        self.root = root
-        self.root_name = root_name
-
-        self.verbose = root.get(verbose_key)
-        logger = logging.getLogger('settings')
-        logger.setLevel(logging.DEBUG if self.verbose else logging.INFO)
-        self.logger = logger
-
-    def get_settings(self, key):
-        sub_settings = self.root.get(key)
-        return Settings(sub_settings, key, 'verbose')
-
-    def get(self, key, default_value):
-        value = self.root.get(key, default_value)
-
-        if self.root_name:
-            self.logger.debug("Setting: %s.%s=%s", self.root_name, key, value)
-        else:
-            self.logger.debug("Setting: %s=%s", key, value)
-
-        return value
-
-
-class ShellCommand(threading.Thread):
-    def __init__(self, view, edit, settings, text, outputRegion):
-        self.stdout = None
-        self.stderr = None
-        self.env = os.environ.copy()
-
-        self.edit = edit
-        self.view = view
-        self.settings = settings
-        self.outputRegion = outputRegion
-
-        logger = logging.getLogger('CodeRunner')
-        logger.setLevel(logging.DEBUG if settings.verbose else logging.INFO)
-        self.logger = logger
-
-        self.shell_commands = settings.get(commands_setting, default_commands)
-        self.config_tag = settings.get(config_tag_setting, default_config_tag)
-
-        self.code = ""
-        self.script = ""
-        self.parameters = []
-        self.previous_args = {}
-        self.args = {}
-        self.config = {}
-        self.working_dir = ""
-        self.user_input = ""
-
-        self.extract_config()
-        self.parse_text(text)
-
-        threading.Thread.__init__(self)
-
-    @staticmethod
-    def identify_parameters(script):
-        return [
-            s[1] or s[2]
-            for s in Template.pattern.findall(script) if s[1] or s[2]
-        ]
-
-    def extract_config(self):
-        configStart = r"<!--\W*" + self.config_tag + r"\W*-->"
-        startRegion = self.view.find(configStart, 0)
-        if startRegion.a < 0:
-            return None
-
-        line = self.view.full_line(startRegion.a)
-        start = line.b
-
-        configEnd = r"<!--\W*/" + self.config_tag + r"\W*-->"
-        endRegion = self.view.find(configEnd, start)
-        if endRegion.a < 0:
-            return None
-
-        line = self.view.full_line(endRegion.a)
-        end = line.a - 1
-
-        configText = self.view.substr(sublime.Region(start, end))
-        self.logger.debug("found config block:\n%s", configText)
-
-        lines = self.view.split_by_newlines(sublime.Region(start, end))
-        for line in lines:
-            text = self.view.substr(line)
-            parts = text.split("=", 1)
-            if len(parts) == 2:
-                name = parts[0].split()[-1]
-                value = parts[1]
-                self.logger.debug("extracted config: %s='%s'", name, value)
-                self.config[name] = value
-
-    def parse_text(self, text):
-        self.logger.debug("parse text:\n%s", text)
-
-        lines = text.splitlines()
-        if not lines:
-            return
-
-        # drop fencing (first and last lines)
-        first_line = lines[0]
-        if first_line.startswith('```sh'):
-            lines = lines[1:-1]
-
-        self.code = "\n".join(lines)
-
-        # extract working directory if set
-        first_line = lines[0]
-        if first_line.startswith("#"):
-            self.working_dir = first_line[1:]
-            self.config["working_dir"] = self.working_dir
-            lines = lines[1:]
-
-        self.script = " ".join(lines)
-
-        self.parameters = self.identify_parameters(self.script)
-
-        self.logger.debug("working dir: %s", self.working_dir)
-        self.logger.debug("parameters: %s", self.parameters)
-        self.logger.debug("script: %s", self.script)
-
     def capture_args(self):
         param = self.find_missing_argument()
         if param:
             prev_arg = self.get_previous_arg(param)
             self.ask_parameter(param, prev_arg)
         else:
-            self.run()
+            self.start_process()
 
     def find_missing_argument(self):
         for param in self.parameters:
@@ -318,7 +228,117 @@ class ShellCommand(threading.Thread):
         if param:
             self.ask_parameter(param, '')
         else:
-            self.run()
+            self.start_process()
+
+    def start_process(self):
+        self.view.run_command('monitor_process', {
+            # 'settings': self.settings,
+            'config': self.config,
+            'args': self.args,
+            'text': self.text,
+            'blockEnd': self.codeRegion.b
+        })
+
+
+class MonitorProcessCommand(sublime_plugin.TextCommand):
+    def __init__(self, view):
+        sublime_plugin.TextCommand.__init__(self, view)
+
+    def run(self, edit, config, args, text, blockEnd):
+        settings = load_settings()
+
+        cmd = ShellCommand(
+            view=self.view,
+            edit=edit,
+            settings=settings,
+            config=config,
+            args=args,
+            text=text,
+            blockEnd=blockEnd,
+        )
+        cmd.run()
+
+
+class ShellCommand(threading.Thread):
+    def __init__(self, view, edit, settings, config, args, text, blockEnd):
+        self.stdout = None
+        self.stderr = None
+        self.env = os.environ.copy()
+
+        self.edit = edit
+        self.view = view
+        self.settings = settings
+        self.config = config
+        self.args = args
+
+        logger = logging.getLogger('CodeRunner')
+        logger.setLevel(logging.DEBUG if settings.verbose else logging.INFO)
+        self.logger = logger
+
+        self.shell_commands = settings.get(commands_key, default_commands)
+        self.output_tag = settings.get(output_tag_key, default_output_tag)
+
+        self.code = ""
+        self.script = ""
+        self.working_dir = ""
+
+        self.outputRegion = self.locate_output_block(blockEnd)
+        self.parse_text(text)
+
+        threading.Thread.__init__(self)
+
+    def locate_output_block(self, blockEnd):
+        outputStart = r"<!--\W*" + self.output_tag + r"\W*-->"
+        startRegion = self.view.find(outputStart, blockEnd + 1)
+        if startRegion.a < 0:
+            return None
+
+        fencedRegion = self.view.find(r'^```', blockEnd + 1)
+        if fencedRegion.a > 0 and fencedRegion.a < startRegion.a:
+            return None
+
+        line = self.view.full_line(startRegion.a)
+        start = line.b
+
+        outputEnd = r"<!--\W*/" + self.output_tag + r"\W*-->"
+        endRegion = self.view.find(outputEnd, start)
+        if endRegion.a < 0:
+            return None
+
+        line = self.view.full_line(endRegion.a)
+        end = line.a - 1
+
+        outputRegion = sublime.Region(start, end)
+        text = self.view.substr(outputRegion)
+
+        self.logger.debug("found output block:\n%s", text)
+        return outputRegion
+
+    def parse_text(self, text):
+        self.logger.debug("parse text:\n%s", text)
+
+        lines = text.splitlines()
+        if not lines:
+            return
+
+        # drop fencing (first and last lines)
+        first_line = lines[0]
+        if first_line.startswith('```sh'):
+            lines = lines[1:-1]
+
+        self.code = "\n".join(lines)
+
+        # extract working directory if set
+        first_line = lines[0]
+        if first_line.startswith("#"):
+            self.working_dir = first_line[1:]
+            self.config["working_dir"] = self.working_dir
+            lines = lines[1:]
+
+        self.script = " ".join(lines)
+
+        self.logger.debug("working dir: %s", self.working_dir)
+        self.logger.debug("script: %s", self.script)
 
     def run(self):
         script = self.script
@@ -346,13 +366,13 @@ class ShellCommand(threading.Thread):
             env=self.env
         )
 
-        tail = Tail(3)
+        buffer = tail.CyclicBuffer(3)
         output = ""
         while True:
             line = proc.stdout.readline()
             line = line.strip()
             if line != "":
-                tail.add(line)
+                buffer.add(line)
                 output += line + "\n"
 
             return_code = proc.poll()
@@ -367,7 +387,7 @@ class ShellCommand(threading.Thread):
                 output += line + "\n"
 
         if self.outputRegion:
-            self.view.replace(self.edit, self.outputRegion, tail.text())
+            self.view.replace(self.edit, self.outputRegion, buffer.text())
 
         if output != '':
             self.logger.debug("showing results")
@@ -378,29 +398,6 @@ class ShellCommand(threading.Thread):
                 'command': script,
                 'results': output
             })
-
-
-class Tail:
-    def __init__(self, maximum):
-        self.maximum = maximum
-        self.size = 0
-        self.position = 0
-        self.list = [None] * maximum
-
-    def add(self, line):
-        self.list[self.position] = line
-        if self.size < self.maximum:
-            self.size += 1
-        self.position = (self.position + 1) % self.maximum
-
-    def text(self):
-        text = ""
-        start = self.position % self.size
-        for i in range(self.size):
-            position = (start + i) % self.size
-            text += self.list[position] + "\n"
-
-        return text.strip()
 
 
 class ShowResultsCommand(sublime_plugin.TextCommand):
