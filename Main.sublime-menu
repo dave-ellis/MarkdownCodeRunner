@@ -1,0 +1,90 @@
+[
+    {
+        "caption": "Tools",
+        "id": "tools",
+        "children":
+        [
+            {
+                "caption": "Packages",
+                "id": "packages",
+                "children":
+                [
+                    {
+                        "caption": "CodeRunner",
+                        "children":
+                        [
+                            {
+                                "command": "run_block",
+                                "caption": "Run block"
+                            },
+                        ]
+                    }
+                ]
+            }
+        ]
+    },
+    {
+        "caption": "Preferences",
+        "id": "preferences",
+        "children":
+        [
+            {
+                "caption": "Package Settings",
+                "id": "package-settings",
+                "children":
+                [
+                    {
+                        "caption": "CodeRunner",
+                        "children":
+                        [
+                            {
+                                "command": "open_file",
+                                "args": {"file": "${packages}//CodeRunner.sublime-settings"},
+                                "caption": "Settings – Default"
+                            },
+                            {
+                                "command": "open_file",
+                                "args": {"file": "${packages}/User/CodeRunner.sublime-settings"},
+                                "caption": "Settings – User"
+                            },
+                            {
+                                "command": "open_file",
+                                "args": {"file": "${packages}/CodeRunner/Default.sublime-keymap"},
+                                "caption": "Key Bindings – Default"
+                            },
+                            {
+                                "command": "open_file",
+                                "args": {
+                                    "file": "${packages}/User/Default (OSX).sublime-keymap",
+                                    "platform": "OSX"
+                                },
+                                "caption": "Key Bindings – User"
+                            },
+                            {
+                                "command": "open_file",
+                                "args": {
+                                    "file": "${packages}/User/Default (Linux).sublime-keymap",
+                                    "platform": "Linux"
+                                },
+                                "caption": "Key Bindings – User"
+                            },
+                            {
+                                "command": "open_file",
+                                "args": {
+                                    "file": "${packages}/User/Default (Windows).sublime-keymap",
+                                    "platform": "Windows"
+                                },
+                                "caption": "Key Bindings – User"
+                            },
+                            {
+                                "command": "open_file",
+                                "args": {"file": "${packages}/CodeRunner/README.md"},
+                                "caption": "Readme"
+                            },
+                        ]
+                    }
+                ]
+            }
+        ]
+    }
+]
