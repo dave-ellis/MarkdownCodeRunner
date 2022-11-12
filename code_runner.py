@@ -5,11 +5,11 @@ import threading
 import json
 import logging
 
-import sublime_settings
-import tail
-
 from string import Template
 from datetime import datetime
+
+from .tail import CyclicBuffer
+from .settings import Settings
 
 try:
     import sublime
@@ -27,12 +27,14 @@ except ImportError:  # running tests
     sys.modules['sublime_plugin'] = sublime_plugin
 
 verbose_key = 'code_runner_verbose'
-scope_key = 'code_runner_scope_name'
+block_scope_key = 'code_runner_block_scope'
+header_scope_key = 'code_runner_header_scope'
 commands_key = 'code_runner_commands'
 config_tag_key = 'code_runner_config_tag'
 output_tag_key = 'code_runner_output_tag'
 
-default_scope_name = 'markup.raw.block.fenced.markdown'
+default_block_scope = 'markup.raw.block.fenced.markdown'
+default_header_scope = 'markup.heading.markdown'
 default_commands = {
     "sh": "C:\\Program Files\\Git\\usr\\bin\\bash.exe"
 }
@@ -40,11 +42,12 @@ default_config_tag = "CodeRunnerCONFIG"
 default_output_tag = "CodeRunnerOUT"
 
 results_view_name = "Code Runner Results"
+run_directory_name = ".CodeRunner"
 
 
 def load_settings():
     root = sublime.load_settings('CodeRunner.sublime-settings')
-    return sublime_settings.Settings(root, None, verbose_key)
+    return Settings(root, None, verbose_key)
 
 
 class RunCodeCommand(sublime_plugin.TextCommand):
@@ -54,8 +57,18 @@ class RunCodeCommand(sublime_plugin.TextCommand):
         self.settings = load_settings()
 
         self.verbose = self.settings.verbose
-        self.scope = self.settings.get(scope_key, default_scope_name)
-        self.config_tag = self.settings.get(config_tag_key, default_config_tag)
+        self.block_scope = self.settings.get(
+            block_scope_key,
+            default_block_scope
+        )
+        self.header_scope = self.settings.get(
+            header_scope_key,
+            default_header_scope
+        )
+        self.config_tag = self.settings.get(
+            config_tag_key,
+            default_config_tag
+        )
 
         self.edit = None
         self.config = {}
@@ -82,14 +95,16 @@ class RunCodeCommand(sublime_plugin.TextCommand):
 
         selection = self.view.sel()
         cur = selection[-1].a
-        if self.view.match_selector(cur, self.scope):
+        if self.view.match_selector(cur, self.block_scope):
             now = datetime.now()
             self.args = {'timestamp': now.strftime("%Y-%m-%dT%H:%M:%S")}
 
-            self.codeRegion = self.expand_to_scope(cur, self.scope)
+            self.codeRegion = self.expand_to_scope(cur, self.block_scope)
             self.text = self.region_text(self.codeRegion)
 
             self.config = self.extract_config()
+
+            self.identify_script_name()
 
             self.parameters = self.identify_parameters(self.text)
             self.logger.debug("parameters: %s", self.parameters)
@@ -128,6 +143,23 @@ class RunCodeCommand(sublime_plugin.TextCommand):
                 config[name] = value
 
         return config
+
+    def identify_script_name(self):
+        # scan back from code region until we encounter a header
+        self.script_name = None
+
+        cur = self.codeRegion.a - 1
+        while cur > 0:
+            line = self.view.full_line(cur)
+            if self.view.match_selector(line.a, self.header_scope):
+                header = self.view.substr(line)
+                self.script_name = ''.join(
+                    filter(lambda x: x.isalnum(), header.title())
+                )
+                self.logger.debug("script name: %s", self.script_name)
+                return
+
+            cur = line.a - 1
 
     def expand_to_scope(self, point, scope):
         region = self.view.full_line(point)
@@ -232,7 +264,7 @@ class RunCodeCommand(sublime_plugin.TextCommand):
 
     def start_process(self):
         self.view.run_command('monitor_process', {
-            # 'settings': self.settings,
+            'script_name': self.script_name,
             'config': self.config,
             'args': self.args,
             'text': self.text,
@@ -244,7 +276,7 @@ class MonitorProcessCommand(sublime_plugin.TextCommand):
     def __init__(self, view):
         sublime_plugin.TextCommand.__init__(self, view)
 
-    def run(self, edit, config, args, text, blockEnd):
+    def run(self, edit, script_name, config, args, text, blockEnd):
         settings = load_settings()
 
         cmd = ShellCommand(
@@ -252,15 +284,16 @@ class MonitorProcessCommand(sublime_plugin.TextCommand):
             edit=edit,
             settings=settings,
             config=config,
+            name=script_name,
             args=args,
             text=text,
-            blockEnd=blockEnd,
+            end=blockEnd,
         )
         cmd.run()
 
 
 class ShellCommand(threading.Thread):
-    def __init__(self, view, edit, settings, config, args, text, blockEnd):
+    def __init__(self, view, edit, settings, config, name, args, text, end):
         self.stdout = None
         self.stderr = None
         self.env = os.environ.copy()
@@ -269,6 +302,7 @@ class ShellCommand(threading.Thread):
         self.view = view
         self.settings = settings
         self.config = config
+        self.base_name = name
         self.args = args
 
         logger = logging.getLogger('CodeRunner')
@@ -282,8 +316,10 @@ class ShellCommand(threading.Thread):
         self.script = ""
         self.working_dir = ""
 
-        self.outputRegion = self.locate_output_block(blockEnd)
+        self.outputRegion = self.locate_output_block(end)
         self.parse_text(text)
+
+        self.script_file = self.write_shell_script()
 
         threading.Thread.__init__(self)
 
@@ -322,39 +358,73 @@ class ShellCommand(threading.Thread):
             return
 
         # drop fencing (first and last lines)
-        first_line = lines[0]
-        if first_line.startswith('```sh'):
-            lines = lines[1:-1]
-
-        self.code = "\n".join(lines)
+        if lines[0].startswith('```sh'):
+            lines = lines[1:]
+        if lines[-1] == '```':
+            lines = lines[:-1]
 
         # extract working directory if set
         first_line = lines[0]
         if first_line.startswith("#"):
             self.working_dir = first_line[1:]
-            self.config["working_dir"] = self.working_dir
-            lines = lines[1:]
+            self.args["working_dir"] = self.working_dir
+            line = "cd ${working_dir}"
+            lines[0] = line + ";"
 
+        self.code = "\n".join(lines)
         self.script = " ".join(lines)
 
         self.logger.debug("working dir: %s", self.working_dir)
         self.logger.debug("script: %s", self.script)
 
+    def write_shell_script(self):
+        view_filename = self.view.file_name()
+        if not view_filename:
+            return None
+
+        self.view_dir = os.path.dirname(os.path.realpath(view_filename))
+        basename = os.path.splitext(os.path.basename(view_filename))[0]
+
+        script_dir = os.path.join(self.view_dir, run_directory_name, basename)
+        os.makedirs(script_dir, exist_ok=True)
+
+        script_name = self.base_name + ".sh"
+        script_filename = os.path.join(script_dir, script_name)
+        self.logger.debug("script filename: %s", script_filename)
+
+        file = open(script_filename, "w")
+
+        # write shell script header
+        file.write("#!/bin/sh\n\n")
+
+        # write arguments
+        for param in self.args:
+            file.write(param)
+            file.write("=")
+            file.write('"' + self.args[param] + '"')
+            file.write("\n")
+
+        file.write("\n")
+
+        # write the code block
+        file.write(self.code)
+        file.write("\n")
+        file.close()
+
+        return script_filename
+
     def run(self):
-        script = self.script
-        if self.working_dir:
-            script = "cd " + self.working_dir + ";" + script
-
-        command_template = Template(script)
-
-        self.logger.debug("args: %s", self.args)
-        script = command_template.substitute(self.args)
-        self.logger.debug("running: %s", script)
-
         shell_command = os.path.realpath(self.shell_commands['sh'])
 
         shell_dir = os.path.dirname(shell_command)
         shell_basename = os.path.basename(shell_command)
+
+        script = self.script_file
+        if os.path.exists(os.path.join(shell_dir, "cygpath.exe")):
+            # convert to posix path and execute
+            script = '$(cygpath -u "' + self.script_file + '")'
+
+        self.logger.debug("running: %s", script)
 
         os.chdir(shell_dir)
         proc = subprocess.Popen(
@@ -366,7 +436,7 @@ class ShellCommand(threading.Thread):
             env=self.env
         )
 
-        buffer = tail.CyclicBuffer(3)
+        buffer = CyclicBuffer(3)
         output = ""
         while True:
             line = proc.stdout.readline()
@@ -387,7 +457,11 @@ class ShellCommand(threading.Thread):
                 output += line + "\n"
 
         if self.outputRegion:
-            self.view.replace(self.edit, self.outputRegion, buffer.text())
+            relpath = os.path.relpath(self.script_file, start=self.view_dir)
+
+            tailed = "* [Script File]({})\n".format(relpath)
+            tailed += "```\n{}\n```".format(buffer.text())
+            self.view.replace(self.edit, self.outputRegion, tailed)
 
         if output != '':
             self.logger.debug("showing results")
@@ -395,7 +469,7 @@ class ShellCommand(threading.Thread):
 
             self.view.run_command('show_results', {
                 'header': header,
-                'command': script,
+                'command': self.script_file,
                 'results': output
             })
 

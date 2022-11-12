@@ -1,6 +1,7 @@
 {
 	"code_runner_verbose": true,
-	"code_runner_block_scope_name": "markup.raw.block.fenced.markdown",
+	"code_runner_block_scope": "markup.raw.block.fenced.markdown",
+	"code_runner_header_scope": "markup.heading.markdown",
 	"code_runner_config_tag": "CodeRunnerCONFIG",
 	"code_runner_output_tag": "CodeRunnerOUT",
 	"code_runner_shell_commands": {

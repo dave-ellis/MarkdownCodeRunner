@@ -146,8 +146,11 @@ For details see the keymap file available through the menu:
 * [x] Use a configurable shell command to support different environments
 * [x] Run a single line shell code command
 * [x] Handle supplying the working directory
-* [x] Display the results in new view
-* [x] Identify, request and inject parameters
+* [x] Support results view
+    * [x] Display the results in new view
+    * [x] Record script and parameters in results
+    * [ ] Progressively update results view as output is generated
+* [x] Support script parameters
     * [x] Identify required parameters
     * [x] Ask for parameters that are missing
     * [x] Inject parameters to script
@@ -157,25 +160,26 @@ For details see the keymap file available through the menu:
 * [x] Support configuration block
     * [x] Extract settings
     * [x] Supply settings as parameters to script
-* [x] Record script and parameters in results
-* [ ] Support output block
+* [x] Support output block
     * [x] Support updating / replacing output section
     * [x] Handle missing output block
     * [x] Add timestamp to output
+* [x] Handle multi-line code block
+    * [x] Name code block based on closest header
+    * [x] Create and run shell script
+    * [ ] Handle multiple code blocks under a header
+    * [ ] Handle no header found
+* [ ] Support output block options
     * [ ] Support `tail=n`
     * [ ] Support `head=n`
     * [ ] Support `filter=text`
-* [ ] Handle multi-line code block
-    * [ ] Create and run temp shell file
 * [ ] Support history block
-    * [ ] Name code block based on closest header
     * [ ] Record results to timestamped file
     * [ ] Append to history block reference to result file
     * [ ] Support `keep=n` option and limit to latest `n` runs
 * [ ] Advanced parameters
     * [ ] Deduce directory and file types with validation and selection dialog 
 * [ ] Display menu and run selected code block
-* [ ] Progressively update results view as output is generated
 
 
 ## Bugs
