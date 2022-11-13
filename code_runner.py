@@ -29,14 +29,15 @@ except ImportError:  # running tests
 verbose_key = 'code_runner_verbose'
 block_scope_key = 'code_runner_block_scope'
 header_scope_key = 'code_runner_header_scope'
-commands_key = 'code_runner_commands'
+commands_key = 'code_runner_shell_commands'
 config_tag_key = 'code_runner_config_tag'
 output_tag_key = 'code_runner_output_tag'
 
 default_block_scope = 'markup.raw.block.fenced.markdown'
 default_header_scope = 'markup.heading.markdown'
 default_commands = {
-    "sh": "C:\\Program Files\\Git\\usr\\bin\\bash.exe"
+    # "sh": "C:\\Program Files\\Git\\usr\\bin\\bash.exe"
+    "sh": "/bin/sh"
 }
 default_config_tag = "CodeRunnerCONFIG"
 default_output_tag = "CodeRunnerOUT"
@@ -139,6 +140,11 @@ class RunCodeCommand(sublime_plugin.TextCommand):
             if len(parts) == 2:
                 name = parts[0].split()[-1]
                 value = parts[1]
+
+                # Substitute template values
+                value_template = Template(value)
+                value = value_template.substitute(config)
+
                 self.logger.debug("extracted config: %s='%s'", name, value)
                 config[name] = value
 
@@ -459,7 +465,7 @@ class ShellCommand(threading.Thread):
         if self.outputRegion:
             relpath = os.path.relpath(self.script_file, start=self.view_dir)
 
-            tailed = "* [Script File]({})\n".format(relpath)
+            tailed = "* [Script]({})\n".format(relpath)
             tailed += "```\n{}\n```".format(buffer.text())
             self.view.replace(self.edit, self.outputRegion, tailed)
 

@@ -5,11 +5,7 @@ Runs code in fenced blocks.
 
 ## Installation
 
-The plugin is tested on Windows and Linux but should also work on macOS.
-To install it from https://packagecontrol.io/ do the following:
-
-1. Open the command palette and find "Package Control: Install Package"
-2. Search for CodeRunner and install.
+The plugin has been tested on Windows. 
 
 To install from GitHub do the following:
 
@@ -78,8 +74,9 @@ Example code block with an OUT block:
     cd ${working_dir}
     go test ./...
     ```
-    <!-- CodeRunnerOUT{tail=1} -->
-    * [Output File](.CodeRunner/PageName/Run_Tests/20221031T125313.out)
+    <!-- CodeRunnerOUT -->
+    * [Script](.CodeRunner/PageNameABC/RunTests.sh)
+    * [Output](.CodeRunner/PageNameABC/RunTests/20221031T125313.out)
     ```
     ok github.com/packagex
     ```
@@ -102,11 +99,11 @@ If this block exists, then it will be updated each time a code block is executed
 
 Example history block:
 
-    <!-- CodeRunnerHISTORY{keep=10} -->
+    <!-- CodeRunnerHISTORY -->
     * 2022-10-31:
-        - 13:35:51 [Run Tests](.CodeRunner/PageName/Run_Tests/20221031T125313.out)
-        - 13:45:32 [Run Tests](.CodeRunner/PageName/Run_Tests/20221031T134532.out)
-        - 16:01:51 [Run Tests](.CodeRunner/PageName/Run_Tests/20221031T160151.out)
+        - 13:35:51 [Run Tests](.CodeRunner/PageNameABC/RunTests/20221031T125313.out)
+        - 13:45:32 [Run Tests](.CodeRunner/PageNameABC/RunTests/20221031T134532.out)
+        - 16:01:51 [Run Tests](.CodeRunner/PageNameABC/RunTests/20221031T160151.out)
     <!-- /CodeRunnerHISTORY -->
 
 ### HISTORY block parameters
@@ -130,7 +127,6 @@ In markdown contexts (using the default keymap) the following shortcuts are avai
 | Shortcut        | Command   | Description                                                     |
 |-----------------|-----------|-----------------------------------------------------------------|
 |  `ctrl+shift+r` | run_block | Executes the run block command against the current fenced block |
-|  `ctrl+shift+m` | ask_menu  | Allows the user to select from list of commands                 | 
 
 
 ## Settings
@@ -160,6 +156,7 @@ For details see the keymap file available through the menu:
 * [x] Support configuration block
     * [x] Extract settings
     * [x] Supply settings as parameters to script
+    * [x] Support inter-dependent settings
 * [x] Support output block
     * [x] Support updating / replacing output section
     * [x] Handle missing output block
@@ -179,16 +176,19 @@ For details see the keymap file available through the menu:
     * [ ] Support `keep=n` option and limit to latest `n` runs
 * [ ] Advanced parameters
     * [ ] Deduce directory and file types with validation and selection dialog 
-* [ ] Display menu and run selected code block
+* [ ] Test on linux 
+* [ ] Test on MacOS
 
 
-## Bugs
+## Known Bugs
 
 * Separate fenced blocks merge together if they are only separated by white-space 
 
 
 ## Future 
 
+* Display menu and run selected code block
+* Add package control
 * Support for python code blocks
 * Support for http code blocks
 
