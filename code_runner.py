@@ -1,5 +1,6 @@
 import subprocess
 import os
+import stat
 import sys
 import threading
 import json
@@ -29,7 +30,7 @@ except ImportError:  # running tests
 verbose_key = 'code_runner_verbose'
 block_scope_key = 'code_runner_block_scope'
 header_scope_key = 'code_runner_header_scope'
-commands_key = 'code_runner_shell_commands'
+commands_key = 'code_runner_commands'
 config_tag_key = 'code_runner_config_tag'
 output_tag_key = 'code_runner_output_tag'
 
@@ -398,24 +399,24 @@ class ShellCommand(threading.Thread):
         script_filename = os.path.join(script_dir, script_name)
         self.logger.debug("script filename: %s", script_filename)
 
-        file = open(script_filename, "w")
+        with open(script_filename, "w") as file:
+            # write shell script header
+            file.write("#!/bin/sh\n\n")
 
-        # write shell script header
-        file.write("#!/bin/sh\n\n")
+            # write arguments
+            for param in self.args:
+                file.write(param)
+                file.write("=")
+                file.write('"' + self.args[param] + '"')
+                file.write("\n")
 
-        # write arguments
-        for param in self.args:
-            file.write(param)
-            file.write("=")
-            file.write('"' + self.args[param] + '"')
             file.write("\n")
 
-        file.write("\n")
+            # write the code block
+            file.write(self.code)
+            file.write("\n")
 
-        # write the code block
-        file.write(self.code)
-        file.write("\n")
-        file.close()
+        os.chmod(script_filename, stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
 
         return script_filename
 
@@ -432,10 +433,11 @@ class ShellCommand(threading.Thread):
 
         self.logger.debug("running: %s", script)
 
-        os.chdir(shell_dir)
+        is_windows = os.name == 'nt'
         proc = subprocess.Popen(
             [shell_basename, "-c", script],
-            shell=True,
+            cwd=shell_dir,
+            shell=is_windows,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             universal_newlines=True,
@@ -446,8 +448,8 @@ class ShellCommand(threading.Thread):
         output = ""
         while True:
             line = proc.stdout.readline()
-            line = line.strip()
-            if line != "":
+            if line:
+                line = line.strip()
                 buffer.add(line)
                 output += line + "\n"
 
@@ -458,15 +460,16 @@ class ShellCommand(threading.Thread):
 
         # Process has finished, read rest of the output
         for line in proc.stdout.readlines():
-            line = line.strip()
-            if line != "":
-                output += line + "\n"
+            if line:
+                output += line.strip() + "\n"
 
         if self.outputRegion:
             relpath = os.path.relpath(self.script_file, start=self.view_dir)
 
             tailed = "* [Script]({})\n".format(relpath)
-            tailed += "```\n{}\n```".format(buffer.text())
+            if buffer.size > 0:
+                tailed += "```\n{}\n```".format(buffer.text())
+
             self.view.replace(self.edit, self.outputRegion, tailed)
 
         if output != '':
@@ -478,7 +481,8 @@ class ShellCommand(threading.Thread):
                 'command': self.script_file,
                 'results': output
             })
-
+        else:
+            self.logger.debug("no results captured")
 
 class ShowResultsCommand(sublime_plugin.TextCommand):
     def __init__(self, view):

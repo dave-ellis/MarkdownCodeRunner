@@ -1,3 +1,6 @@
+import os
+
+
 class CyclicBuffer:
     def __init__(self, maximum):
         self.maximum = maximum
@@ -13,9 +16,11 @@ class CyclicBuffer:
 
     def text(self):
         text = ""
-        start = self.position % self.size
-        for i in range(self.size):
-            position = (start + i) % self.size
-            text += self.list[position] + "\n"
+
+        if self.size > 0:
+            start = self.position % self.maximum
+            for i in range(self.size):
+                position = (start + i) % self.size
+                text += self.list[position] + os.linesep
 
         return text.strip()
