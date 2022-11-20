@@ -5,7 +5,7 @@ Runs code in fenced blocks.
 
 ## Installation
 
-The plugin has been tested on Windows. 
+The plugin has been tested on Windows and macOS. 
 
 To install from GitHub do the following:
 
@@ -145,7 +145,7 @@ For details see the keymap file available through the menu:
 * [x] Support results view
     * [x] Display the results in new view
     * [x] Record script and parameters in results
-    * [ ] Progressively update results view as output is generated
+    * [x] Progressively update results view as output is generated
 * [x] Support script parameters
     * [x] Identify required parameters
     * [x] Ask for parameters that are missing
@@ -177,7 +177,6 @@ For details see the keymap file available through the menu:
 * [ ] Advanced parameters
     * [ ] Deduce directory and file types with validation and selection dialog 
 * [ ] Test on linux 
-* [ ] Test on MacOS
 
 
 ## Known Bugs

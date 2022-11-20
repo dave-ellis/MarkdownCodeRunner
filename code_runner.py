@@ -327,6 +327,8 @@ class ShellCommand(threading.Thread):
         self.parse_text(text)
 
         self.script_file = self.write_shell_script()
+        self.script_path = ''
+        self.tail_buffer = CyclicBuffer(7)
 
         threading.Thread.__init__(self)
 
@@ -340,16 +342,16 @@ class ShellCommand(threading.Thread):
         if fencedRegion.a > 0 and fencedRegion.a < startRegion.a:
             return None
 
-        line = self.view.full_line(startRegion.a)
-        start = line.b
+        self.logger.debug("output block start region: %s", startRegion)
+        start = startRegion.b
 
         outputEnd = r"<!--\W*/" + self.output_tag + r"\W*-->"
         endRegion = self.view.find(outputEnd, start)
         if endRegion.a < 0:
             return None
 
-        line = self.view.full_line(endRegion.a)
-        end = line.a - 1
+        self.logger.debug("output block end region: %s", endRegion)
+        end = endRegion.a
 
         outputRegion = sublime.Region(start, end)
         text = self.view.substr(outputRegion)
@@ -444,14 +446,19 @@ class ShellCommand(threading.Thread):
             env=self.env
         )
 
-        buffer = CyclicBuffer(3)
-        output = ""
+        self.script_path = os.path.relpath(self.script_file, start=self.view_dir)
+        self.outputRegion = self.update_output_block(self.outputRegion)
+
+        if self.args:
+            header = json.dumps(self.args) + "\n---\n"
+        header += "> " + self.script_file + "\n\n"
+        self.view.run_command('append_result', {'result': header})
+
+        self.tail_buffer = CyclicBuffer(3)
         while True:
             line = proc.stdout.readline()
             if line:
-                line = line.strip()
-                buffer.add(line)
-                output += line + "\n"
+                self.emit_result_line(line)
 
             return_code = proc.poll()
             if return_code is not None:
@@ -461,28 +468,35 @@ class ShellCommand(threading.Thread):
         # Process has finished, read rest of the output
         for line in proc.stdout.readlines():
             if line:
-                output += line.strip() + "\n"
+                self.emit_result_line(line)
 
-        if self.outputRegion:
-            relpath = os.path.relpath(self.script_file, start=self.view_dir)
+        footer = "\n===\n\n"
+        self.view.run_command('append_result', {'result': footer})
 
-            tailed = "* [Script]({})\n".format(relpath)
-            if buffer.size > 0:
-                tailed += "```\n{}\n```".format(buffer.text())
+    def emit_result_line(self, line=''):
+        self.logger.debug("emitting result line: %s", line)
 
-            self.view.replace(self.edit, self.outputRegion, tailed)
+        line = line.rstrip(' \t\r\n') + '\n'
+        self.tail_buffer.add(line)
+        self.outputRegion = self.update_output_block(self.outputRegion)
+        self.view.run_command('append_result', {
+            'result': line
+        })
 
-        if output != '':
-            self.logger.debug("showing results")
-            header = json.dumps(self.args) if self.args else ''
+    def update_output_block(self, region):
+        if region is not None:
+            begin = region.begin()
 
-            self.view.run_command('show_results', {
-                'header': header,
-                'command': self.script_file,
-                'results': output
-            })
-        else:
-            self.logger.debug("no results captured")
+            output_block = "\n* [Script]({})\n".format(self.script_path)
+            output_block += "```\n"
+            output_block += self.tail_buffer.text()
+            output_block += "```\n"
+            self.view.replace(self.edit, region, output_block)
+
+            region = sublime.Region(begin, begin + len(output_block))
+
+        return region
+
 
 class ShowResultsCommand(sublime_plugin.TextCommand):
     def __init__(self, view):
@@ -520,7 +534,40 @@ class ShowResultsCommand(sublime_plugin.TextCommand):
         results_view.settings().set("draw_centered", False)
         results_view.settings().set("word_wrap", False)
 
-        # win.focus_view(results_view)
+        win.focus_view(self.view)
+
+        return results_view
+
+
+class AppendResultCommand(sublime_plugin.TextCommand):
+    def __init__(self, view):
+        sublime_plugin.TextCommand.__init__(self, view)
+
+    def run(self, edit, result=''):
+        # Get new view for results
+        results_view = self.results_view(edit)
+
+        results_view.set_read_only(False)
+        results_view.insert(edit, results_view.size(), result)
+        results_view.set_read_only(True)
+
+    def results_view(self, edit):
+        win = self.view.window()
+
+        for view in win.views():
+            if view.name() == results_view_name:
+                return view
+
+        results_view = win.new_file()
+
+        # Configure view
+        results_view.set_name(results_view_name)
+        results_view.set_scratch(True)
+
+        results_view.settings().set('line_numbers', False)
+        results_view.settings().set("draw_centered", False)
+        results_view.settings().set("word_wrap", False)
+
         win.focus_view(self.view)
 
         return results_view
