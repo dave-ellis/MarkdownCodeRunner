@@ -311,6 +311,7 @@ class ShellCommand(threading.Thread):
         self.config = config
         self.base_name = name
         self.args = args
+        self.blockEnd = end
 
         logger = logging.getLogger('CodeRunner')
         logger.setLevel(logging.DEBUG if settings.verbose else logging.INFO)
@@ -323,7 +324,7 @@ class ShellCommand(threading.Thread):
         self.script = ""
         self.working_dir = ""
 
-        self.outputRegion = self.locate_output_block(end)
+        self.outputRegion = self.locate_output_block()
         self.parse_text(text)
 
         self.script_file = self.write_shell_script()
@@ -332,13 +333,13 @@ class ShellCommand(threading.Thread):
 
         threading.Thread.__init__(self)
 
-    def locate_output_block(self, blockEnd):
+    def locate_output_block(self):
         outputStart = r"<!--\W*" + self.output_tag + r"\W*-->"
-        startRegion = self.view.find(outputStart, blockEnd + 1)
+        startRegion = self.view.find(outputStart, self.blockEnd + 1)
         if startRegion.a < 0:
             return None
 
-        fencedRegion = self.view.find(r'^```', blockEnd + 1)
+        fencedRegion = self.view.find(r'^```', self.blockEnd + 1)
         if fencedRegion.a > 0 and fencedRegion.a < startRegion.a:
             return None
 
@@ -447,7 +448,8 @@ class ShellCommand(threading.Thread):
         )
 
         self.script_path = os.path.relpath(self.script_file, start=self.view_dir)
-        self.outputRegion = self.update_output_block(self.outputRegion)
+        self.update_output_block(self.outputRegion)
+        self.outputRegion = self.locate_output_block()
 
         if self.args:
             header = json.dumps(self.args) + "\n---\n"
@@ -478,7 +480,9 @@ class ShellCommand(threading.Thread):
 
         line = line.rstrip(' \t\r\n') + '\n'
         self.tail_buffer.add(line)
-        self.outputRegion = self.update_output_block(self.outputRegion)
+
+        self.update_output_block(self.outputRegion)
+        self.outputRegion = self.locate_output_block()
         self.view.run_command('append_result', {
             'result': line
         })
@@ -491,11 +495,22 @@ class ShellCommand(threading.Thread):
             output_block += "```\n"
             output_block += self.tail_buffer.text()
             output_block += "```\n"
-            self.view.replace(self.edit, region, output_block)
 
-            region = sublime.Region(begin, begin + len(output_block))
+            self.view.run_command('replace_block', {
+                "begin": begin,
+                "end": region.end(),
+                'text': output_block
+            })
 
-        return region
+
+class ReplaceBlockCommand(sublime_plugin.TextCommand):
+    def __init__(self, view):
+        sublime_plugin.TextCommand.__init__(self, view)
+
+    def run(self, edit, begin=0, end=0, text=''):
+        region = sublime.Region(begin, end)
+
+        self.view.replace(edit, region, text)
 
 
 class ShowResultsCommand(sublime_plugin.TextCommand):
