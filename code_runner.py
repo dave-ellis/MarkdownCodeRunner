@@ -296,7 +296,7 @@ class MonitorProcessCommand(sublime_plugin.TextCommand):
             text=text,
             end=blockEnd,
         )
-        cmd.run()
+        cmd.start()
 
 
 class ShellCommand(threading.Thread):
